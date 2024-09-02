@@ -10,13 +10,17 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from .util import quaternion_to_yaw, get_corner_feature,\
+from sklearn.cluster import DBSCAN
+from .util import quaternion_to_yaw, get_center_radius,\
                   angle_between_yaw, plot_cov
 
 class SlamEkf(Node):
     def __init__(self):
         super().__init__('ekf_slam')
 
+        # for grouping lidar scan points
+        self.dbscan = DBSCAN(eps=0.2,min_samples=1)
+        
         # subscriber to odom topic, use odom as control input
         self.odom_sub = self.create_subscription(Odometry, '/odom',
                                                  self.odom_callback,10)
@@ -145,8 +149,9 @@ class SlamEkf(Node):
         self.robot_pose_odom.append([x,y,yaw])
 
     def scan_callback(self, msg : LaserScan):
-        """callback for lidar scan topic; extract corner features from
-        lidar points and use them as landmarks
+        """callback for lidar scan topic; group lidar points using dbscan
+        and infer the center and radius of the cylinder, which serves as 
+        the landmarks
 
         Args:
             msg (LaserScan): _description_
@@ -164,14 +169,24 @@ class SlamEkf(Node):
         pts = np.hstack([pt_x[:,np.newaxis],pt_y[:,np.newaxis]])
         self.lidar_pts_fixedframe = pts # store for plotting
 
-        # detect corner features
-        corners = get_corner_feature(pts, angles[keep])
+        # cluster points
+        pts_clu = self.cluster_pts(pts)
+        
+        # find the center and radius for each cluster
+        all_center = []
+        for clu in pts_clu:
+            center, r = get_center_radius(clu)
+            if center is not None:
+                all_center.append(center)
+        if len(all_center)==0:
+            return
+        all_center = np.array(all_center)
 
         # convert back to range and bearing
         data = []
-        for corner in corners:
-            dx = corner[0]-x
-            dy = corner[1]-y
+        for center in all_center:
+            dx = center[0]-x
+            dy = center[1]-y
             # range and bearing, expressed in robot frame
             angle = angle_between_yaw(yaw, np.arctan2(dy,dx))
             data.append([np.sqrt(dx**2+dy**2),angle])
@@ -275,6 +290,25 @@ class SlamEkf(Node):
         # self.ax2.set(xlim=(0,self.mu.shape[0]),ylim=(0,self.mu.shape[0]))
         self.fig.canvas.flush_events()
         self.fig.canvas.draw()
+
+    def cluster_pts(self, pts):
+        """cluster lidar points using dbscan
+
+        Args:
+            pts (_type_): _description_
+
+        Returns:
+            result: list of point clusters
+        """
+        if len(pts)==0:
+            return []
+        clu = self.dbscan.fit(pts)
+        labels = clu.labels_
+        nclu = np.max(labels)
+        result = []
+        for i in range(nclu+1):
+            result.append(pts[labels==i])
+        return result
 
     def get_curr_time(self):
         """returns the current ros time
