@@ -46,7 +46,8 @@
     <model name="turtlebot3_world">
       <static>1</static>
       <include>
-        <uri>model://turtlebot3_world</uri>
+        <!-- <uri>model://turtlebot3_world</uri> -->
+        <uri>/home/jay/catkin_EKFSLAM/src/slam_ekf_ros2/slam_ekf/model/turtlebot3_world</uri>
       </include>
     </model>
 
