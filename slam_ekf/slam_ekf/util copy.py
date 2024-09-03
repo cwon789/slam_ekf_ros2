@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import numpy as np
 from nav_msgs.msg import Odometry
+from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
 
 def angle_between_yaw(yaw1, yaw2):
@@ -27,15 +28,15 @@ def angle_between_yaw(yaw1, yaw2):
 def get_cov_ellipse_pts(mu, cov):
     """return the set of points on a ellipse that
       represents the mean and covariance of the gaussian.
-      for plotting purposes.
+      for plotting purpuses.
 
     Args:
-        mu (_type_): mean of the gaussian
-        cov (_type_): covariance of the gaussian
+        mu (_type_): mean of the gaussion
+        cov (_type_): covariance of the gaussion
 
     Returns:
         pts: 2 by n matrix of the points on the ellipse 
-        representing the gaussian
+        representing the gaussion
     """
     x,y=mu
     # compute eig vector
@@ -74,64 +75,92 @@ def plot_cov(plot_handle, ax, mu, cov):
     
     return plot_handle
 
-def corner_loss(x, data):
-    """calculate the loss for fitting a corner feature
-    based on lidar reflection points
+def circle_loss(x, data):
+    """calculate the loss for fitting the center
+    and radius of the cylinder, based on lidar reflection
+    points
 
     Args:
-        x (_type_): a vector containing the corner location
+        x (_type_): a 3 by 1 vector of cylinder center (x,y)
+        and radius r
         data (_type_): the lidar points expressed as xy coordinates
 
     Returns:
         out: the loss to be minimized
     """
-    # data is a 2D array
-    distances = np.linalg.norm(data - x[np.newaxis, :], axis=1)
-    angles = np.arctan2(data[:, 1] - x[1], data[:, 0] - x[0])
-    angle_diffs = np.abs(np.diff(np.sort(angles)))
-    out = np.sum(distances ** 2) + np.sum(angle_diffs ** 2)
+    # data is 2d array
+    out = (data[:,0]-x[0])**2 + (data[:,1]-x[1])**2 - x[2]**2
+    out = np.sum(out**2)
     return out
 
-def initial_corner_guess(data: np.ndarray):
-    """calculates the initial guess of the corner location
+def initial_value(data : np.ndarray):
+    """calculates the initial guess of the cylinder center
+    and radius
 
     Args:
-        data (np.ndarray): lidar points
+        data (np.ndarray): _description_
 
     Returns:
-        _type_: initial guess for the corner location
+        _type_: _description_
     """
-    centroid = np.mean(data, axis=0)
-    return centroid
+    if data.shape[0] >= 4: # at least 4 points
+        n = data.shape[0]
+        i1,i2,i3,i4 = np.random.permutation(n)[:4]
 
-def get_corner_feature(data: np.ndarray):
-    """find the corner feature through minimizing the loss function
+        # pick two pairs of points
+        x1,y1 = data[i1,:]
+        x2,y2 = data[i2,:]
+        x3,y3 = data[i3,:]
+        x4,y4 = data[i4,:]
 
-    Args:
-        data (np.ndarray): lidar points
+        A = np.array([[x1-x2,y1-y2],[x3-x4,y3-y4]])
+        b = np.array([0.5*(x1**2-x2**2)+0.5*(y1**2-y2**2),\
+                      0.5*(x3**2-x4**2)+0.5*(y3**2-y4**2)])[:,np.newaxis]
+        
+        c = np.linalg.inv(A).dot(b)
+        c : np.ndarray = c.flatten()
+        r = np.mean(np.linalg.norm(data-c[np.newaxis,:],axis=1))
 
-    Returns:
-        corner: the location of the detected corner
-    """
-    if data.shape[0] < 3:
+        return np.concatenate([c,[r]])
+    else:
         return None
 
-    # compute initial guess
-    v0 = initial_corner_guess(data)
-    out = minimize(corner_loss, x0=v0, args=(data,))
-    if out.success:
-        return out.x
+def get_center_radius(data : np.ndarray):
+    """find the center and radius of the cylinder 
+    through minimizing the loss function
 
-    return None
+    Args:
+        data (np.ndarray): _description_
 
-def quaternion_to_yaw(msg: Odometry):
+    Returns:
+        _type_: _description_
+    """
+    i = 0   
+    while i <= 10:
+        i+=1
+        # compute initial guess
+        v0 = initial_value(data)
+        if v0 is None:
+            return None, None
+        out = minimize(circle_loss, x0=v0,args=(data,))
+        if out.success is True:
+            # check the residue
+            c = out.x[:2]
+            r = out.x[-1]
+            res = np.abs(np.linalg.norm(data-c[np.newaxis,:],axis=1)-r)
+            if np.mean(res)<=0.1:
+                return c, r
+
+    return None, None
+
+def quaternion_to_yaw(msg : Odometry):
     """extract yaw info from odom messages
 
     Args:
-        msg (Odometry): the odometry message
+        msg (Odometry): _description_
 
     Returns:
-        yaw: the yaw angle extracted from the quaternion
+        _type_: _description_
     """
     r = Rotation.from_quat([msg.pose.pose.orientation.x,
                             msg.pose.pose.orientation.y,
