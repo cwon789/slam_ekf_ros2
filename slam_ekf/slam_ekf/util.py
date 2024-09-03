@@ -2,6 +2,7 @@
 import numpy as np
 from nav_msgs.msg import Odometry
 from scipy.spatial.transform import Rotation
+from scipy.optimize import minimize
 
 def angle_between_yaw(yaw1, yaw2):
     """calculates the angle between two frames
